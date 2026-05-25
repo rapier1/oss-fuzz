@@ -84,6 +84,21 @@ $CXX $CXXFLAGS -std=c++11 $EXTRA_CFLAGS -I. -L. -Lopenbsd-compat -g \
 	$SK_DUMMY agent_fuzz_helper.o ssh-sk.o $COMMON_DEPS -lz \
 	$STATIC_CRYPTO $LIB_FUZZING_ENGINE
 
+# HPN-SSH SFTP-extension fuzzers (not present upstream).
+# sftp_bundle_extract_fuzz exercises the server-side tar reader path
+# (hpn-bundle-open@hpnssh.org); links libarchive for the tar parser.
+$CXX $CXXFLAGS -std=c++11 $EXTRA_CFLAGS -I. -g \
+	regress/misc/fuzz-harness/sftp_bundle_extract_fuzz.cc \
+	-o $OUT/sftp_bundle_extract_fuzz \
+	-larchive $LIB_FUZZING_ENGINE
+
+# sftp_fs_info_fuzz exercises the client-side reply parser for
+# hpn-fs-info@hpnssh.org; pure sshbuf so it only needs libssh + compat.
+$CXX $CXXFLAGS -std=c++11 $EXTRA_CFLAGS -I. -L. -Lopenbsd-compat -g \
+	regress/misc/fuzz-harness/sftp_fs_info_fuzz.cc \
+	-o $OUT/sftp_fs_info_fuzz \
+	$COMMON_DEPS $STATIC_CRYPTO $LIB_FUZZING_ENGINE
+
 # Prepare seed corpora
 CASES="$SRC/openssh-fuzz-cases"
 (set -e ; cd ${CASES}/key ; zip -r $OUT/pubkey_fuzz_seed_corpus.zip .)
@@ -94,3 +109,19 @@ CASES="$SRC/openssh-fuzz-cases"
 (set -e ; cd ${CASES}/sshsigopt ; zip -r $OUT/sshsigopt_fuzz_seed_corpus.zip .)
 (set -e ; cd ${CASES}/kex ; zip -r $OUT/kex_fuzz_seed_corpus.zip .)
 (set -e ; cd ${CASES}/agent ; zip -r $OUT/agent_fuzz_seed_corpus.zip .)
+
+# HPN-SSH SFTP-extension seed corpora: generated in-place by checked-in
+# C programs (matches the mkcorpus_sntrup761 pattern).  Build the
+# generators with the unsanitized host CC so they're plain executables,
+# run them, then zip the resulting directories.  -larchive is needed
+# for the bundle generator.
+$CC -O2 -g -o mkcorpus_sftp_bundle_extract \
+	regress/misc/fuzz-harness/mkcorpus_sftp_bundle_extract.c -larchive
+$CC -O2 -g -o mkcorpus_sftp_fs_info \
+	regress/misc/fuzz-harness/mkcorpus_sftp_fs_info.c
+./mkcorpus_sftp_bundle_extract
+./mkcorpus_sftp_fs_info
+(set -e ; cd sftp_bundle_extract_corpus ; \
+    zip -r $OUT/sftp_bundle_extract_fuzz_seed_corpus.zip .)
+(set -e ; cd sftp_fs_info_corpus ; \
+    zip -r $OUT/sftp_fs_info_fuzz_seed_corpus.zip .)
