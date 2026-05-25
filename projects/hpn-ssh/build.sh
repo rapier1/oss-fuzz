@@ -78,26 +78,36 @@ $CXX $CXXFLAGS -std=c++11 $EXTRA_CFLAGS -I. -L. -Lopenbsd-compat -g \
 
 $CC $CFLAGS $EXTRA_CFLAGS -I. -g -c \
 	regress/misc/fuzz-harness/agent_fuzz_helper.c -o agent_fuzz_helper.o
-$CC $CFLAGS $EXTRA_CFLAGS -I. -g -c -DENABLE_SK_INTERNAL=1 ssh-sk.c -o ssh-sk.o
+# Rebuild ssh-sk.c with ENABLE_SK_INTERNAL=1 for agent_fuzz, but write
+# to a different .o so the make-built ssh-sk.o (no ENABLE_SK_INTERNAL)
+# isn't clobbered.  If clobbered, the hpnssh-sk-helper link fails on a
+# subsequent build because sk-usbhid.o no longer satisfies references
+# that only exist in the internal-mode build.  Harmless in ephemeral
+# oss-fuzz CI; bites local-mount development builds.
+$CC $CFLAGS $EXTRA_CFLAGS -I. -g -c -DENABLE_SK_INTERNAL=1 \
+	ssh-sk.c -o ssh-sk-internal.o
 $CXX $CXXFLAGS -std=c++11 $EXTRA_CFLAGS -I. -L. -Lopenbsd-compat -g \
 	regress/misc/fuzz-harness/agent_fuzz.cc -o $OUT/agent_fuzz \
-	$SK_DUMMY agent_fuzz_helper.o ssh-sk.o $COMMON_DEPS -lz \
+	$SK_DUMMY agent_fuzz_helper.o ssh-sk-internal.o $COMMON_DEPS -lz \
 	$STATIC_CRYPTO $LIB_FUZZING_ENGINE
 
 # HPN-SSH SFTP-extension fuzzers (not present upstream).
 # sftp_bundle_extract_fuzz exercises the server-side tar reader path
-# (hpn-bundle-open@hpnssh.org); links libarchive for the tar parser.
+# (hpn-bundle-open@hpnssh.org); statically links libarchive because
+# oss-fuzz's base-runner image doesn't ship libarchive.so.13.  Same
+# -Bstatic/-Bdynamic pattern the existing $STATIC_CRYPTO uses.
 $CXX $CXXFLAGS -std=c++11 $EXTRA_CFLAGS -I. -g \
 	regress/misc/fuzz-harness/sftp_bundle_extract_fuzz.cc \
 	-o $OUT/sftp_bundle_extract_fuzz \
-	-larchive $LIB_FUZZING_ENGINE
+	-Wl,-Bstatic -larchive -Wl,-Bdynamic $LIB_FUZZING_ENGINE
 
 # sftp_fs_info_fuzz exercises the client-side reply parser for
-# hpn-fs-info@hpnssh.org; pure sshbuf so it only needs libssh + compat.
+# hpn-fs-info@hpnssh.org; needs libssh (for sshbuf) and ssh-sk-null.o
+# to stub the SK functions that sshkey.o pulls in transitively.
 $CXX $CXXFLAGS -std=c++11 $EXTRA_CFLAGS -I. -L. -Lopenbsd-compat -g \
 	regress/misc/fuzz-harness/sftp_fs_info_fuzz.cc \
 	-o $OUT/sftp_fs_info_fuzz \
-	$COMMON_DEPS $STATIC_CRYPTO $LIB_FUZZING_ENGINE
+	$COMMON_DEPS $SK_NULL $STATIC_CRYPTO $LIB_FUZZING_ENGINE
 
 # Prepare seed corpora
 CASES="$SRC/openssh-fuzz-cases"
